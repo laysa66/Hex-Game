@@ -1,6 +1,3 @@
-les participants sont : 
-- Matmar Lysa / GRP A
-- Mahmoud Al Ali Mahmoud / GRP A
 
 
 To run the server, you need to have a working installation of [Node.js](https://nodejs.org/en/). Then, run the following commands:
