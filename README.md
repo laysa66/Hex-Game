@@ -2,9 +2,9 @@
 
 To run the server, you need to have a working installation of [Node.js](https://nodejs.org/en/). Then, run the following commands:
 
-    npm install // pour installer les bibliothèques
-    npm run dev // pour lancer le serveur en mode développement
-    npm run start // pour lancer le serveur en mode prod (normal)
+    npm install // 
+    npm run dev // 
+    npm run start // 
 
 ## Expliquer le fonctionnement du serveur
 
