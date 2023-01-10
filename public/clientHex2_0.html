@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="http://d3js.org/d3.v5.min.js" charSet="utf-8"></script>
+  <script src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
+
+  <script type="text/javascript">
+    const socket = io()
+
+    let r = 20
+    let w = r*2*(Math.sqrt(3)/2)
+    let ctx
+    let sel = [-1, -1]
+    let plateau = new Array(14)
+    let hist = []
+
+    let players = {
+      Player1: {playerId: 0, color: "rgb(255,0,39)"},
+      Player2: {playerId: 1, color: "rgb(0,154,172)"}
+    }
+
+    let player = 0
+
+    let active = true
+    /*
+    * Permets pour dessiner un hexagone dans un canvas. La fonction prend en paramètres la coordonnée de centre de l'hexagone (x, y), un rayon (r), et utilise les méthodes c.beginPath, c.moveTo, c.lineTo, c.closePath, c.fill, et c.stroke pour dessiner l'hexagone.
+    * La fonction utilise une boucle for pour dessiner les six côtés de l'hexagone. Chaque côté est dessiné en utilisant les coordonnées polaires calculées en fonction de l'angle de l'hexagone et du rayon. Une fois les six côtés dessinés, l'hexagone est rempli et entouré d'un trait.
+    * */
+    function dessinerHexagone(c, x, y, r) {
+      c.beginPath();
+      c.moveTo(x, y-r);
+      for(let i=0; i<6; i++) {
+        c.lineTo(x + r * Math.cos(Math.PI * (1.5 + 1 / 3 * i)), y + r * Math.sin(Math.PI * (1.5 + 1 / 3 * i)));
+      }
+      c.closePath();
+      c.fill();
+      c.stroke();
+    }
+
+    /*
+    * @param {canvas} c Le canvas sur lequel on dessine
+    * @param {Array} p un tableau de coordonnées de grille qui forment le chemin (p)
+    * 
+    * Permet de dessiner le chemin lors de la victoire
+    * */
+    function dessinerChemin(c, p){
+      c.lineWidth = 10;
+      c.beginPath();
+      c.moveTo((p[0][0]+p[0][1])*w - (p[0][1]-4)*(w/2), (p[0][1]+2)*1.5*r);
+      for(let i=1; i<p.length; i++)
+        c.lineTo((p[i][0]+p[i][1])*w - (p[i][1]-4)*(w/2), (p[i][1]+2)*1.5*r);
+      c.stroke();
+    }
+
+    /*
+    * La fonction permets de sélectionner une coordonnée dans la grille du jeu hexagonal. La fonction prend en paramètre un événement de souris e et utilise les coordonnées de l'événement pour déterminer quelle coordonnée a été sélectionnée.
+    * La fonction utilise la méthode ctx.getImageData pour récupérer les données de couleur de l'hexagone sous le curseur de la souris. Ces données sont utilisées pour calculer les coordonnées de l'hexagone sélectionné. Si les coordonnées calculées sont valides et que la couleur de l'hexagone sélectionné est l'une des trois couleurs autorisées, la variable sel est mise à jour avec les coordonnées de l'hexagone sélectionné. Sinon, la variable sel est mise à [-1, -1] pour indiquer qu'aucune coordonnée valide n'a été sélectionnée.
+    * */
+    function getCase(e) {
+      let color = ctx.getImageData(e.clientX-20, e.clientY, 1, 1).data
+      color[0] -= color[2]===38||color[2]===178 ? 241 : 0
+      color[1] -= color[2]===178 ? 220 : (color[2]===38 ? 0 : 140)
+      if(color[0] >= 0  &&  color[0] <= 13  &&  color[1] >= 0  &&  color[1] <= 13  &&  (color[2] === 38  ||  color[2] === 171  ||  color[2] === 178))
+        sel = [color[0], color[1]]
+      else
+        sel = [-1, -1]
+    }
+
+
+    /*
+    *On utilise cette fonction dans la fonction obtenirConnexions pour vérifier si une coordonnée donnée est déjà présente dans les tableaux ouvert ou ferme.
+    *Si c'est le cas, la coordonnée n'est pas ajoutée au tableau ret.
+    * */
+    function trouverDansTableau(a, b) {
+      for(let i=0; i<a.length; i++)
+        if(JSON.stringify(a[i]) === JSON.stringify(b))
+          return i
+      return -1
+    }
+
+
+    /*
+    * La fonction prend en paramètre une coordonnée de grille (x, y) et une couleur (c), et renvoie un tableau de coordonnées qui sont connectées à la coordonnée donnée et ont la même couleur.
+    * La fonction définit d'abord un tableau a qui contient les coordonnées x et y relatives des six hexagones adjacents. Par exemple, les deux premiers éléments de a sont les coordonnées x et y relatives de l'hexagone situé à gauche de la coordonnée donnée.
+    * La fonction parcourt ensuite les six premiers éléments de a (correspondant aux six hexagones adjacents) et vérifie si les coordonnées des hexagones adjacents sont dans les limites de la grille, ont la même couleur que la coordonnée donnée, et ne sont pas déjà présentes dans les tableaux ouvert ou ferme. Si toutes ces conditions sont remplies, les coordonnées de l'hexagone adjacent sont ajoutées au tableau ret.
+    * Enfin, le tableau ret est renvoyé.
+    * */
+    function obtenirConnexions(x, y, c, ouvert, ferme) {
+      let a = [-1, 0, 1, 0, 0, -1, 0, 1, 1, -1, -1, 1];
+      let ret = [];
+      for(let i=0; i<6; i++)
+        if(x+a[i*2] >= 0  &&  x+a[i*2] < 14  &&  y+a[i*2+1] >= 0  &&  y+a[i*2+1] < 14)
+          if(plateau[x+a[i*2]][y+a[i*2+1]] === c  &&  trouverDansTableau(ouvert, [x+a[i*2],y+a[i*2+1]]) === -1  &&  trouverDansTableau(ferme, [x+a[i*2],y+a[i*2+1]]) === -1)
+            ret.push([x+a[i*2],y+a[i*2+1]]);
+      return ret;
+    }
+
+    /*
+    * Permets de vérifier si l'un des joueurs a gagné la partie. La fonction prend en paramètre la couleur du joueur à vérifier (c) et utilise une approche de recherche en largeur pour trouver un chemin entre les bords du plateau correspondant à la couleur du joueur.
+    * La fonction commence par parcourir chaque ligne ou colonne du plateau, en fonction de la couleur du joueur (si c'est 0, elle parcourt les lignes, sinon elle parcourt les colonnes). Pour chaque ligne ou colonne, elle vérifie si un hexagone de la couleur du joueur est présent. Si c'est le cas, elle utilise l'approche de recherche en largeur pour trouver un chemin vers l'autre bord du plateau.
+    * Si un chemin est trouvé, la fonction retourne un tableau de coordonnées de grille qui forment le chemin. Sinon, la fonction retourne false pour indiquer qu'aucun chemin n'a été trouvé.
+    * */
+    function verifierVictoire(c) {
+      let open = [], openPrev = [], closed = [], closedPrev = [];
+      for(let a=0; a<14; a++)
+      {
+        if(plateau[c==0?a:0][c==0?0:a] == c)
+        {
+          open.length = openPrev.length = closed.length = closedPrev.length = 0;
+          let pathFound = false;
+          open.push([c==0?a:0, c==0?0:a]);
+          openPrev.push(-1);
+          while(open.length > 0)
+          {
+            let u = open[0];
+            open.splice(0, 1);
+            let uI = openPrev.splice(0, 1);
+            closed.push(u);
+            closedPrev.push(uI);
+            if(u[c==0?1:0] == 13)
+            {
+              pathFound = true;
+              break;
+            }
+            let connections = obtenirConnexions(u[0], u[1], c, open, closed);
+            for(let i=0; i<connections.length; i++)
+            {
+              open.push(connections[i]);
+              openPrev.push(closed.length-1);
+            }
+          }
+          if(pathFound)
+          {
+            let path = [];
+            let u = closed.length-1;
+            while(closedPrev[u] != -1)
+            {
+              path.push(closed[u]);
+              u = closedPrev[u];
+            }
+            path.push([c==0?a:0, c==0?0:a]);
+            path.reverse();
+            active = false;
+            return path;
+          }
+        }
+      }
+      return false;
+    }
+
+
+
+
+    function dessiner(hx=14,hy=14) {
+      ctx.clearRect(0, 0, 850, 600);
+      ctx.lineWidth = 1;
+
+      ctx.fillStyle = `${players.Player2.color}`
+      ctx.beginPath()
+      ctx.moveTo(w*15.65, r)
+      ctx.lineTo(w*23.5, 24.5*r)
+      ctx.lineTo(0, r);
+      ctx.lineTo(w*7.85, 24.5*r)
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = `${players.Player1.color}`
+      ctx.beginPath()
+      ctx.moveTo(0, r)
+      ctx.lineTo(w*15.65, r)
+      ctx.lineTo(w*7.85, 24.5*r)
+      ctx.lineTo(w*23.5, 24.5*r)
+      ctx.closePath()
+      ctx.fill()
+
+      let num = 0
+      ctx.strokeStyle = "black"
+      for(let y=0; y<hy; y++)
+      {
+        for(let x=0; x<hx; x++)
+        {
+          if(plateau[x][y] === 0) {
+            ctx.fillStyle = `${players.Player1.color}`
+          }
+          else if(plateau[x][y] === 1)
+          {
+            ctx.fillStyle = `${players.Player2.color}`
+          }
+          else if(x === sel[0]  &&  y === sel[1]) {
+            ctx.fillStyle = "rgb(" + (x + (player === 0 ? 241 : 0)) + "," + (y + (player === 0 ? 0 : 140)) + "," + (player === 0 ? 38 : 171) + ")";
+          }
+          else {
+            ctx.fillStyle = "rgb(" + (x + 241) + "," + (y + 220) + ",178)";
+          }
+          dessinerHexagone(ctx, (x+y)*w - (y-4)*(w/2), (y+2)*1.5*r, r);
+          num++;
+        }
+      }
+    }
+
+
+
+    function init(x=14,y=14) {
+      for(let i=0; i<x; i++)
+      {
+        plateau[i] = new Array(x);
+        for(let j=0; j<y; j++)
+          plateau[i][j] = -1;
+      }
+      hist.length = 0;
+      active = true;
+      dessiner();
+    }
+
+    function load() {
+      let canvas = document.getElementById("hex_game");
+      ctx = canvas.getContext("2d");
+
+      canvas.onmousedown = (e)=>{
+        // Get the current selection of the player
+        getCase(e);
+
+        // Only continue if the player has selected a valid case on the board
+        if (active && sel[0] !== -1 && sel[1] !== -1) {
+          // Add the player's move to the board and switch the current player
+          hist.push([sel[0], sel[1], player]);
+          plateau[sel[0]][sel[1]] = player;
+          player = player === 0 ? 1 : 0;
+
+          // Emit an event to the other player's client to let them know it's their turn
+          socket.emit("yourTurn", {
+            sel: [sel[0], sel[1]],
+            plateau: plateau,
+            player: player,
+          });
+
+          dessiner();
+
+          // Check if either player has won
+          let p0 = verifierVictoire(0), p1 = verifierVictoire(1);
+          console.log("p0: " + p0 + " p1: " + p1);
+          if (p0 !== false) {
+            console.log(p0)
+            dessinerChemin(ctx, p0);
+            alert("You" + " won!");
+          } else if (p1 !== false) {
+            dessinerChemin(ctx, p1);
+            alert("The blue player" + " won!");
+          }
+        }
+      };
+
+
+      canvas.onmousemove = (e)=>{
+        getCase(e);
+        if(active)
+          dessiner();
+      }
+
+      init();
+    }
+
+    socket.on("yourTurn", (data) => {
+      // Update the game state with the data received from the server
+      sel = data.sel;
+      plateau = data.plateau;
+      player = data.player;
+
+      // Draw the updated game board
+      dessiner();
+
+      // Check if either player has won
+      let p0 = verifierVictoire(0),
+              p1 = verifierVictoire(1);
+      if (p0 !== false) {
+        dessinerChemin(ctx, p0);
+        alert("The Red player" + " won!");
+      } else if (p1 !== false) {
+        dessinerChemin(ctx, p1);
+        alert("The blue player" + " won!");
+      }
+    });
+  </script>
+
+  <title>Hex</title>
+  <style>
+    body
+    {
+      font-family: sans-serif;
+      font-size: 12px;
+    }
+    #hex_game
+    {
+      margin: 0 auto;
+    }
+    #messages
+    {
+      margin: 19px;
+    }
+  </style>
+
+</head>
+<body>
+<canvas  width="850" height="600" id="hex_game">Canvas not supported...</canvas>
+<h2><span id="currentPlayer"></span> VS <span id="vsPlayer"></span></h2>
+<div >
+  <input id="newGame" type="button" onClick="init()" value="Nouvelle la partie">
+  <input id="quitter" type="button" value="Quitter la partie">
+</div>
+
+<h1>Messagerie :</h1>
+<form action="">
+  <label for="msg">Message</label>
+  <input id="msg" autocomplete="off" />
+  <button>Send</button>
+</form>
+<div id="messages"></div>
+
+
+<script>
+
+  $(()=>{
+    let name = ''
+    let vsPlayer = ''
+
+    while (name === '') {
+      name = prompt("Entrez votre Psudo :");
+      if (name === null) {
+        window.location.href = "/"
+      }
+      else{
+        alert("Veuillez mettre un pseudo pour commencer la partie")
+      }
+    }
+    $('#currentPlayer').text(name)
+    socket.emit('startGame', {name: name})
+
+    socket.on('startGame', (data) => {
+      vsPlayer = !data.filter(element => element !== name)[0] ? '' : data.filter(element => element !== name)[0]
+      $('#vsPlayer').text(vsPlayer)
+    })
+
+
+    $('#newGame').click(()=>{
+      socket.emit('newGame');
+    });
+
+    socket.on('error_start', (data)=>{
+      alert(data)
+      window.location.href = "/"
+    });
+
+    //listen to new game
+    socket.on('newGame', function(){
+      init();
+    });
+    socket.on('endGame', function(data){
+      active = false
+      alert(`${data.name}a quitté la partie, partie terminée`)
+      window.location.href = "/"
+    });
+
+
+    socket.on('init', function(){
+     load()
+    });
+
+    $('#quitter').click(()=>{
+      socket.emit('quitter', {name: name});
+    })
+    socket.on('quitter', (data)=>{
+      window.location.href = "/"
+    })
+
+    $("form").submit(function (e) {
+      e.preventDefault();
+      let msg = $("#msg");
+      console.log("Envoi du message : " );
+      if (!!msg.val().trim()) {
+        socket.emit("chat", {user : name , message : msg.val()});
+        msg.val("");
+      }
+      return false;
+    });
+
+    socket.on("chat", function (data) {
+      $("#messages").append($("<li>").text(`${data.user} -> ${data.message}`));
+    });
+
+  });
+</script>
+
+
+
+</body>
+
+</html>
